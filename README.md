@@ -105,9 +105,4 @@ supply-chain-lab/
 MIT License - For educational and research purposes only.
 
 ## Author
-
-Security Research Lab Exercise - DevSecOps Red Team Simulation
-
----
-
-**Reproduce locally**: See [lab/how-to-reproduce-locally.md](lab/how-to-reproduce-locally.md)
+Himangshu Sarkar
