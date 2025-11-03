@@ -1,0 +1,65 @@
+# Verdaccio Configuration for Lab Environment
+# This is a private registry for supply-chain attack simulation ONLY
+
+storage: /verdaccio/storage/data
+plugins: /verdaccio/plugins
+
+# Web UI configuration
+web:
+  title: Lab Private Registry
+  enable: true
+
+# Authentication
+auth:
+  htpasswd:
+    file: /verdaccio/storage/htpasswd
+    max_users: 10
+
+# Package access control
+packages:
+  '@lab/*':
+    access: $all
+    publish: $all
+    unpublish: $all
+    proxy: npmjs
+
+  '**':
+    access: $all
+    publish: $authenticated
+    unpublish: $authenticated
+    proxy: npmjs
+
+# Uplink to official npm registry
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+    timeout: 30s
+    max_fails: 3
+    fail_timeout: 5m
+
+# Logging
+logs:
+  - { type: stdout, format: pretty, level: info }
+
+# Server configuration
+listen:
+  - 0.0.0.0:4873
+
+# Additional security settings for lab environment
+security:
+  api:
+    jwt:
+      sign:
+        expiresIn: 7d
+  web:
+    sign:
+      expiresIn: 7d
+
+# Publish settings
+publish:
+  allow_offline: true
+
+# Experimentation settings
+experiments:
+  search: true
+  token: true

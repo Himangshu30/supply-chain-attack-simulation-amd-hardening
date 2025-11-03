@@ -1,0 +1,190 @@
+name: Security Scan & Supply-Chain Analysis
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  dependency-analysis:
+    name: Dependency Analysis & SBOM Generation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'app/package-lock.json'
+      
+      - name: Install dependencies
+        working-directory: ./app
+        run: |
+          echo "⚠️  Installing dependencies (may trigger malicious preinstall scripts)"
+          npm ci 2>&1 | tee ../evidence/npm-install.log || true
+      
+      - name: Check for compromise evidence
+        run: |
+          echo "🔍 Checking for compromise indicators..."
+          if [ -f "LAB_COMPROMISED.txt" ]; then
+            echo "❌ COMPROMISE DETECTED: LAB_COMPROMISED.txt found"
+            cat LAB_COMPROMISED.txt
+            exit 1
+          fi
+          if [ -f "evidence/compromise-log.json" ]; then
+            echo "❌ COMPROMISE DETECTED: Evidence log found"
+            cat evidence/compromise-log.json
+            exit 1
+          fi
+          echo "✅ No compromise evidence detected"
+      
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      
+      - name: Generate SBOM
+        run: |
+          echo "📦 Generating Software Bill of Materials..."
+          syft dir:./app -o cyclonedx-json > sbom/sbom-cyclonedx.json
+          syft dir:./app -o spdx-json > sbom/sbom-spdx.json
+          syft dir:./app -o table > sbom/sbom-table.txt
+          echo "✅ SBOM generated"
+      
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-reports
+          path: sbom/
+          retention-days: 30
+      
+      - name: Analyze SBOM for suspicious packages
+        run: |
+          echo "🔍 Analyzing SBOM for suspicious packages..."
+          if grep -q "@lab/" sbom/sbom-cyclonedx.json; then
+            echo "❌ ALERT: Suspicious @lab/* package detected in SBOM"
+            grep -A 5 "@lab/" sbom/sbom-cyclonedx.json || true
+            exit 1
+          fi
+          echo "✅ No suspicious packages detected"
+
+  vulnerability-scan:
+    name: Vulnerability Scanning
+    runs-on: ubuntu-latest
+    needs: dependency-analysis
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+      
+      - name: Scan with Grype
+        run: |
+          echo "🛡️  Scanning for vulnerabilities..."
+          grype dir:./app -o json > scans/grype-results.json || true
+          grype dir:./app -o table > scans/grype-results.txt || true
+          echo "✅ Vulnerability scan complete"
+      
+      - name: Check vulnerability thresholds
+        run: |
+          echo "📊 Checking vulnerability thresholds..."
+          # Fail on critical or high severity vulnerabilities
+          if grype dir:./app --fail-on critical 2>&1; then
+            echo "✅ No critical vulnerabilities found"
+          else
+            echo "❌ Critical vulnerabilities detected!"
+            exit 1
+          fi
+      
+      - name: npm audit
+        working-directory: ./app
+        run: |
+          echo "🔍 Running npm audit..."
+          npm audit --json > ../scans/npm-audit.json || true
+          npm audit > ../scans/npm-audit.txt || true
+      
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-scans
+          path: scans/
+          retention-days: 30
+
+  policy-enforcement:
+    name: Security Policy Enforcement
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check for suspicious package.json scripts
+        working-directory: ./app
+        run: |
+          echo "🔍 Checking for suspicious npm scripts..."
+          if grep -E "(preinstall|postinstall|preuninstall)" package.json; then
+            echo "⚠️  WARNING: Lifecycle scripts detected in package.json"
+            cat package.json | grep -A 3 "scripts"
+          fi
+      
+      - name: Verify package-lock.json integrity
+        working-directory: ./app
+        run: |
+          echo "🔍 Verifying package-lock.json integrity..."
+          if [ ! -f "package-lock.json" ]; then
+            echo "❌ FAIL: package-lock.json not found"
+            exit 1
+          fi
+          echo "✅ Lock file present"
+      
+      - name: Check for unexpected registries
+        working-directory: ./app
+        run: |
+          echo "🔍 Checking for non-standard registries..."
+          if [ -f ".npmrc" ]; then
+            if grep -v "registry.npmjs.org" .npmrc; then
+              echo "⚠️  WARNING: Custom registry detected"
+              cat .npmrc
+            fi
+          fi
+          if grep -i "localhost:4873" package-lock.json || true; then
+            echo "❌ ALERT: Local/private registry detected in lock file"
+            exit 1
+          fi
+      
+      - name: Security policy gate
+        run: |
+          echo "🚦 Enforcing security policies..."
+          echo "✅ All policy checks passed"
+
+  evidence-collection:
+    name: Collect Attack Evidence
+    runs-on: ubuntu-latest
+    if: failure()
+    
+    steps:
+      - name: Collect logs and artifacts
+        run: |
+          echo "📋 Collecting evidence of compromise..."
+          mkdir -p evidence-collection
+          
+          # Collect all LAB_* files
+          find . -name "LAB_*" -type f -exec cp {} evidence-collection/ \;
+          
+          # Collect logs
+          cp -r evidence/* evidence-collection/ || true
+          
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: attack-evidence
+          path: evidence-collection/
+          retention-days: 90

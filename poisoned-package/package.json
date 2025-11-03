@@ -1,0 +1,14 @@
+{
+  "name": "@lab/malicious-util",
+  "version": "0.0.1",
+  "description": "LAB_ONLY malicious utility for supply-chain simulation (benign payload)",
+  "main": "index.js",
+  "scripts": {
+    "preinstall": "node preinstall.js"
+  },
+  "author": "Lab Exercise",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
